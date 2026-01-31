@@ -750,6 +750,7 @@ public def Brackets.MatchState.popClose (st : Brackets.MatchState) (id : Nat) (c
     if let some (_, depth) := st.parenStack.back? then
       { st with
         parenStack := st.parenStack.pop
+        parenDepth := st.parenDepth - 1
         colorMap := st.colorMap.insert id (.matched depth)
       }
     else
@@ -758,6 +759,7 @@ public def Brackets.MatchState.popClose (st : Brackets.MatchState) (id : Nat) (c
     if let some (_, depth) := st.bracketStack.back? then
       { st with
         bracketStack := st.bracketStack.pop
+        bracketDepth := st.bracketDepth - 1
         colorMap := st.colorMap.insert id (.matched depth)
       }
     else
@@ -766,6 +768,7 @@ public def Brackets.MatchState.popClose (st : Brackets.MatchState) (id : Nat) (c
     if let some (_, depth) := st.braceStack.back? then
       { st with
         braceStack := st.braceStack.pop
+        braceDepth := st.braceDepth - 1
         colorMap := st.colorMap.insert id (.matched depth)
       }
     else
