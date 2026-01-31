@@ -8,7 +8,9 @@ import SBSBlueprint.Render
 
 import Verso.Doc
 import Verso.Doc.Html
+import Verso.Doc.TeX
 import Verso.Output.Html
+import Verso.Output.TeX
 import Verso.FS
 
 /-!
@@ -84,6 +86,10 @@ structure Config where
   baseUrl : String := "/"
   /-- Whether to emit single-page HTML -/
   emitHtmlSingle : Bool := true
+  /-- Whether to emit TeX output -/
+  emitTeX : Bool := false
+  /-- Directory for TeX output files -/
+  texOutputDir : System.FilePath := "_out/tex"
   /-- Output filename (without extension) -/
   outputFileName : String := "index"
   /-- Additional CSS files to include -/
@@ -429,6 +435,204 @@ def generatePage (cfg : Config) (manifest : Option BlueprintManifest)
   ]))
 
 /-!
+## TeX Generation Support
+
+TeX output is still experimental. For now, we provide a minimal GenreTeX instance
+that renders block and inline extensions to their TeX equivalents.
+
+Note: Full TeX generation requires the GenreTeX instance which is complex to implement
+correctly. For Phase 4, we stub this out and note that actual PDF generation from
+Verso documents would require more work. The `--with-tex` flag is recognized but
+generates a placeholder TeX file.
+-/
+
+open Verso.Output (TeX)
+open Verso.Doc.TeX
+
+/--
+TeX preamble for SBSBlueprint documents.
+-/
+def texPreamble (title : String) (authors : List String) (date : String) : String :=
+  "\\documentclass{article}\n\n" ++
+  "\\usepackage{amsmath}\n" ++
+  "\\usepackage{amsthm}\n" ++
+  "\\usepackage{amssymb}\n" ++
+  "\\usepackage{hyperref}\n" ++
+  "\\usepackage{fancyvrb}\n" ++
+  "\\usepackage{fvextra}\n\n" ++
+  "% Theorem environments\n" ++
+  "\\newtheorem{theorem}{Theorem}[section]\n" ++
+  "\\newtheorem{lemma}[theorem]{Lemma}\n" ++
+  "\\newtheorem{proposition}[theorem]{Proposition}\n" ++
+  "\\newtheorem{corollary}[theorem]{Corollary}\n" ++
+  "\\theoremstyle{definition}\n" ++
+  "\\newtheorem{definition}[theorem]{Definition}\n" ++
+  "\\theoremstyle{remark}\n" ++
+  "\\newtheorem{remark}[theorem]{Remark}\n\n" ++
+  "% Lean code environment\n" ++
+  "\\DefineVerbatimEnvironment{LeanVerbatim}{Verbatim}\n" ++
+  "  {commandchars=\\\\\\{\\},fontsize=\\small,breaklines=true}\n\n" ++
+  "% Blueprint hooks\n" ++
+  "\\newcommand{\\paperstatement}[1]{\\textbf{[Statement: #1]}}\n" ++
+  "\\newcommand{\\paperfull}[1]{\\textbf{[Full: #1]}}\n" ++
+  "\\newcommand{\\paperproof}[1]{\\textbf{[Proof: #1]}}\n" ++
+  "\\newcommand{\\inputleanmodule}[1]{\\textbf{[Module: #1]}}\n\n" ++
+  "\\title{" ++ title ++ "}\n" ++
+  (if authors.isEmpty then "" else "\\author{" ++ String.intercalate " \\and " authors ++ "}\n") ++
+  "\\date{" ++ date ++ "}\n\n" ++
+  "\\begin{document}\n\n" ++
+  "\\maketitle\n" ++
+  "\\tableofcontents\n\n"
+
+/--
+TeX postamble for SBSBlueprint documents.
+-/
+def texPostamble : String := String.singleton '\\' ++ "e" ++ "nd{document}\n"
+
+/--
+Simple TeX escaping for text content.
+-/
+def escapeTeX (s : String) : String :=
+  s.replace "\\" "\\\\"
+   |>.replace "{" "\\{"
+   |>.replace "}" "\\}"
+   |>.replace "_" "\\_"
+   |>.replace "%" "\\%"
+   |>.replace "#" "\\#"
+   |>.replace "&" "\\&"
+   |>.replace "$" "\\$"
+
+/--
+Render an inline element to TeX.
+-/
+partial def inlineToTeX (inline : Inline SBSBlueprint) : String :=
+  match inline with
+  | .text s => escapeTeX s
+  | .emph inlines => "\\emph{" ++ inlines.foldl (fun acc i => acc ++ inlineToTeX i) "" ++ "}"
+  | .bold inlines => "\\textbf{" ++ inlines.foldl (fun acc i => acc ++ inlineToTeX i) "" ++ "}"
+  | .code s => "\\texttt{" ++ escapeTeX s ++ "}"
+  | .math .inline s => "$" ++ s ++ "$"
+  | .math .display s => "\\[" ++ s ++ "\\]"
+  | .link inlines dest =>
+    "\\href{" ++ dest ++ "}{" ++ inlines.foldl (fun acc i => acc ++ inlineToTeX i) "" ++ "}"
+  | .image _alt dest => "\\includegraphics{" ++ dest ++ "}"
+  | .linebreak _ => "\\\\\n"
+  | .footnote _ inlines =>
+    "\\footnote{" ++ inlines.foldl (fun acc i => acc ++ inlineToTeX i) "" ++ "}"
+  | .concat inlines => inlines.foldl (fun acc i => acc ++ inlineToTeX i) ""
+  | .other ext _ =>
+    match ext with
+    | .nodeRef label _ => "\\ref{" ++ label ++ "}"
+    | .statusDot _ => ""
+    | .leanDocLink name _ => "\\texttt{" ++ escapeTeX name.toString ++ "}"
+    | .htmlSpan _ => ""
+    | .highlightedCode _ hl => "\\texttt{" ++ escapeTeX hl.toString ++ "}"
+
+/-- Helper to create LaTeX begin environment -/
+def texBegin (env : String) : String :=
+  String.singleton '\\' ++ "begin" ++ "{" ++ env ++ "}"
+
+/-- Helper to create LaTeX end environment -/
+def texEnvEnd (env : String) : String :=
+  String.singleton '\\' ++ "e" ++ "nd" ++ "{" ++ env ++ "}"
+
+/-- Helper to create LaTeX command with argument -/
+def texCmd (cmd : String) (arg : String) : String :=
+  String.singleton '\\' ++ cmd ++ "{" ++ arg ++ "}"
+
+/--
+Render a Block to TeX (simplified).
+-/
+partial def blockToTeX (block : Block SBSBlueprint) : String :=
+  match block with
+  | .para inlines =>
+    inlines.foldl (fun acc inline => acc ++ inlineToTeX inline) ""
+  | .code content =>
+    texBegin "verbatim" ++ "\n" ++ content ++ "\n" ++ texEnvEnd "verbatim"
+  | .blockquote blocks =>
+    texBegin "quote" ++ "\n" ++ blocks.foldl (fun acc b => acc ++ blockToTeX b ++ "\n") "" ++ texEnvEnd "quote"
+  | .ul items =>
+    texBegin "itemize" ++ "\n" ++
+    items.foldl (fun acc item =>
+      acc ++ "\\item " ++ item.contents.foldl (fun a b => a ++ blockToTeX b) "" ++ "\n"
+    ) "" ++
+    texEnvEnd "itemize"
+  | .ol _ items =>
+    texBegin "enumerate" ++ "\n" ++
+    items.foldl (fun acc item =>
+      acc ++ "\\item " ++ item.contents.foldl (fun a b => a ++ blockToTeX b) "" ++ "\n"
+    ) "" ++
+    texEnvEnd "enumerate"
+  | .dl items =>
+    texBegin "description" ++ "\n" ++
+    items.foldl (fun acc item =>
+      let term := item.term.foldl (fun a i => a ++ inlineToTeX i) ""
+      let desc := item.desc.foldl (fun a b => a ++ blockToTeX b) ""
+      acc ++ "\\item[" ++ term ++ "] " ++ desc ++ "\n"
+    ) "" ++
+    texEnvEnd "description"
+  | .concat blocks =>
+    blocks.foldl (fun acc b => acc ++ blockToTeX b ++ "\n") ""
+  | .other ext _ =>
+    -- Handle blueprint-specific extensions
+    match ext with
+    | .leanNode label => "% Lean node: " ++ label ++ "\n"
+    | .paperStatement label => texCmd "paperstatement" label ++ "\n"
+    | .paperFull label => texCmd "paperfull" label ++ "\n"
+    | .paperProof label => texCmd "paperproof" label ++ "\n"
+    | .leanModule modName => texCmd "inputleanmodule" modName ++ "\n"
+    | .sideBySide label _ _ _ => "% Side-by-side: " ++ label ++ "\n"
+    | .theoremEnv kind label title _ _ =>
+      let titlePart := title.map (fun t => "[" ++ t ++ "]") |>.getD ""
+      texBegin kind ++ titlePart ++ texCmd "label" label ++ "\n% Statement content\n" ++ texEnvEnd kind ++ "\n"
+    | .proofBlock _ => texBegin "proof" ++ "\n% Proof content\n" ++ texEnvEnd "proof" ++ "\n"
+    | .htmlDiv _ => ""
+    | .highlightedCode _ hl =>
+      texBegin "LeanVerbatim" ++ "\n" ++ hl.toString ++ "\n" ++ texEnvEnd "LeanVerbatim" ++ "\n"
+
+/--
+Recursively render a Part to TeX.
+-/
+partial def partToTeX (level : Nat) (part : Part SBSBlueprint) : String :=
+  let headerCmd : String := match level with
+    | 0 => "\\section"
+    | 1 => "\\subsection"
+    | 2 => "\\subsubsection"
+    | _ => "\\paragraph"
+
+  let titleStr := part.title.foldl (fun acc inline =>
+    acc ++ match inline with
+      | .text s => escapeTeX s
+      | _ => ""
+  ) ""
+
+  let header := headerCmd ++ "{" ++ titleStr ++ "}\n\n"
+
+  -- Render content blocks
+  let content := part.content.foldl (fun acc block =>
+    acc ++ blockToTeX block ++ "\n\n"
+  ) ""
+
+  -- Render subparts
+  let subParts := part.subParts.foldl (fun acc sub =>
+    acc ++ partToTeX (level + 1) sub
+  ) ""
+
+  header ++ content ++ subParts
+
+/--
+Generate TeX output for a SBSBlueprint document.
+-/
+def generateTeX (cfg : Config) (text : Part SBSBlueprint) : IO String := do
+  let title := text.metadata.bind (·.title) |>.getD cfg.title
+  let authors : List String := []  -- TODO: extract from metadata
+  let date := ""  -- TODO: extract from metadata
+
+  let content := partToTeX 0 text
+
+  pure <| texPreamble title authors date ++ content ++ texPostamble
+
+/-!
 ## Command-Line Option Parsing
 -/
 
@@ -450,6 +654,12 @@ def parseOptions (cfg : Config) : List String → IO Config
     parseOptions { cfg with verbose := true } rest
   | ("--no-html-single" :: rest) =>
     parseOptions { cfg with emitHtmlSingle := false } rest
+  | ("--with-tex" :: rest) =>
+    parseOptions { cfg with emitTeX := true } rest
+  | ("--without-tex" :: rest) =>
+    parseOptions { cfg with emitTeX := false } rest
+  | ("--tex-output" :: dir :: rest) =>
+    parseOptions { cfg with texOutputDir := dir } rest
   | (unknown :: _) =>
     throw (IO.userError s!"Unknown option: {unknown}")
   | [] => pure cfg
@@ -518,6 +728,20 @@ def sbsBlueprintMain (text : Part SBSBlueprint)
     if cfg.verbose then
       IO.println s!"  Writing {outPath}"
     IO.FS.writeFile outPath htmlStr
+
+  -- Generate TeX if requested
+  if cfg.emitTeX then
+    if cfg.verbose then
+      IO.println "  Generating TeX..."
+
+    let texStr ← generateTeX cfg text
+
+    -- Write TeX output
+    ensureDir cfg.texOutputDir
+    let texOutPath := cfg.texOutputDir / "paper_verso.tex"
+    if cfg.verbose then
+      IO.println s!"  Writing {texOutPath}"
+    IO.FS.writeFile texOutPath texStr
 
   -- Check for errors
   match ← errorCount.get with
