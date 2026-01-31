@@ -50,6 +50,11 @@ lean_lib VersoManual where
   roots := #[`VersoManual]
   needs := #[staticWeb]
 
+@[default_target]
+lean_lib VersoPaper where
+  srcDir := "src/verso-paper"
+  roots := #[`VersoPaper]
+
 input_file tutorialDefaultCss where
   text := true
   path := "src/verso-tutorial/default.css"
