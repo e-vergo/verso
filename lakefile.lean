@@ -55,6 +55,11 @@ lean_lib VersoPaper where
   srcDir := "src/verso-paper"
   roots := #[`VersoPaper]
 
+@[default_target]
+lean_lib SBSBlueprint where
+  srcDir := "src/verso-sbs"
+  roots := #[`SBSBlueprint]
+
 input_file tutorialDefaultCss where
   text := true
   path := "src/verso-tutorial/default.css"
