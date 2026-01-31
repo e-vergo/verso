@@ -441,6 +441,8 @@ public defmethod Token.Kind.«class» : Token.Kind → String
   | .const .. => "const"
   | .option .. => "option"
   | .docComment => "doc-comment"
+  -- Note: lineComment token kind was reverted from SubVerso; comments are now
+  -- handled via string-based post-processing in wrapLineComments
   | .keyword .. => "keyword"
   | .anonCtor .. => "unknown"
   | .unknown => "unknown"
@@ -635,6 +637,409 @@ public partial defmethod Highlighted.toHtml : Highlighted → HighlightHtmlM g H
     }}
   | .seq hls => hls.mapM toHtml
 
+/-!
+## Rainbow Bracket Matching and Comment Highlighting
+
+-- HACK: This is a temporary implementation that does string-based post-processing.
+-- A cleaner approach would integrate with SubVerso's token extraction, but since
+-- line comments appear in inter-token text and the lineComment token kind was reverted,
+-- we handle them here via pattern matching on the rendered strings.
+
+This section implements:
+1. Paired bracket matching with rainbow coloring for Lean code
+2. Line comment highlighting (`-- ...` to end of line)
+
+**Bracket Algorithm:**
+1. Collects all brackets with their positions and token context
+2. Matches pairs using stacks (separate stacks for `()`, `[]`, `{}`)
+3. Skips brackets inside string literal or comment tokens
+4. Assigns colors to matched pairs (cycles through 6 colors)
+5. Assigns error color (red) to orphan/unmatched brackets
+
+**Comment Algorithm:**
+- In inter-token text, finds `--` patterns and wraps to end of line in `.line-comment` spans
+- Does not affect brackets inside comments (they're in text nodes, not tokens)
+-/
+
+/-- Number of bracket colors to cycle through -/
+public def Brackets.numColors : Nat := 6
+
+/-- Bracket color assignment: either a matched pair color (1-6) or error (0) -/
+public inductive Brackets.BracketColor where
+  | matched (depth : Nat)  -- depth mod numColors gives the class index
+  | error
+deriving Inhabited, BEq
+
+/-- Convert bracket color to CSS class -/
+public def Brackets.BracketColor.toClass : Brackets.BracketColor → String
+  | .matched depth => s!"lean-bracket-{(depth % Brackets.numColors) + 1}"
+  | .error => "lean-bracket-error"
+
+/-- Information about a bracket's position in the highlighted code -/
+public structure Brackets.BracketPos where
+  /-- Unique identifier for this bracket position (used as key in color map) -/
+  id : Nat
+  /-- The bracket character -/
+  char : Char
+  /-- Whether this is an opening bracket -/
+  isOpen : Bool
+deriving Inhabited, BEq
+
+/-- Check if a character is a bracket -/
+public def Brackets.isBracket (c : Char) : Bool :=
+  c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}'
+
+/-- Check if a bracket is an opening bracket -/
+public def Brackets.isOpenBracket (c : Char) : Bool :=
+  c == '(' || c == '[' || c == '{'
+
+/-- Check if a token kind should have its brackets colored (not strings or comments) -/
+public def Brackets.shouldColorBrackets : Token.Kind → Bool
+  | .str _ => false
+  | .docComment => false
+  | _ => true
+
+/-- State for collecting brackets from highlighted code -/
+public structure Brackets.CollectState where
+  /-- Current bracket ID counter -/
+  nextId : Nat := 0
+  /-- Collected brackets in order -/
+  brackets : Array Brackets.BracketPos := #[]
+deriving Inhabited
+
+/-- State for matching brackets -/
+public structure Brackets.MatchState where
+  /-- Stack for parentheses -/
+  parenStack : Array (Nat × Nat) := #[]  -- (id, depth)
+  /-- Stack for square brackets -/
+  bracketStack : Array (Nat × Nat) := #[]
+  /-- Stack for curly braces -/
+  braceStack : Array (Nat × Nat) := #[]
+  /-- Current depth for each bracket type -/
+  parenDepth : Nat := 0
+  bracketDepth : Nat := 0
+  braceDepth : Nat := 0
+  /-- Result: map from bracket ID to color -/
+  colorMap : Std.HashMap Nat Brackets.BracketColor := {}
+deriving Inhabited
+
+/-- Push an opening bracket onto the appropriate stack -/
+public def Brackets.MatchState.pushOpen (st : Brackets.MatchState) (id : Nat) (c : Char) : Brackets.MatchState :=
+  match c with
+  | '(' => { st with
+      parenStack := st.parenStack.push (id, st.parenDepth)
+      parenDepth := st.parenDepth + 1
+      colorMap := st.colorMap.insert id (.matched st.parenDepth)
+    }
+  | '[' => { st with
+      bracketStack := st.bracketStack.push (id, st.bracketDepth)
+      bracketDepth := st.bracketDepth + 1
+      colorMap := st.colorMap.insert id (.matched st.bracketDepth)
+    }
+  | '{' => { st with
+      braceStack := st.braceStack.push (id, st.braceDepth)
+      braceDepth := st.braceDepth + 1
+      colorMap := st.colorMap.insert id (.matched st.braceDepth)
+    }
+  | _ => st
+
+/-- Pop a closing bracket and match with opening -/
+public def Brackets.MatchState.popClose (st : Brackets.MatchState) (id : Nat) (c : Char) : Brackets.MatchState :=
+  match c with
+  | ')' =>
+    if let some (_, depth) := st.parenStack.back? then
+      { st with
+        parenStack := st.parenStack.pop
+        colorMap := st.colorMap.insert id (.matched depth)
+      }
+    else
+      { st with colorMap := st.colorMap.insert id .error }
+  | ']' =>
+    if let some (_, depth) := st.bracketStack.back? then
+      { st with
+        bracketStack := st.bracketStack.pop
+        colorMap := st.colorMap.insert id (.matched depth)
+      }
+    else
+      { st with colorMap := st.colorMap.insert id .error }
+  | '}' =>
+    if let some (_, depth) := st.braceStack.back? then
+      { st with
+        braceStack := st.braceStack.pop
+        colorMap := st.colorMap.insert id (.matched depth)
+      }
+    else
+      { st with colorMap := st.colorMap.insert id .error }
+  | _ => st
+
+/-- Mark remaining unmatched opening brackets as errors -/
+public def Brackets.MatchState.markUnmatched (st : Brackets.MatchState) : Brackets.MatchState :=
+  let st := st.parenStack.foldl (fun s (id, _) => { s with colorMap := s.colorMap.insert id .error }) st
+  let st := st.bracketStack.foldl (fun s (id, _) => { s with colorMap := s.colorMap.insert id .error }) st
+  let st := st.braceStack.foldl (fun s (id, _) => { s with colorMap := s.colorMap.insert id .error }) st
+  st
+
+/-- Find all comment ranges in a string (character index ranges where `-- ...` to end of line occurs) -/
+public def Brackets.findCommentRanges (content : String) : Array (Nat × Nat) := Id.run do
+  let mut ranges : Array (Nat × Nat) := #[]
+  let chars := content.toList
+  let mut i := 0
+  while i + 1 < chars.length do
+    if chars[i]! == '-' && chars[i + 1]! == '-' then
+      -- Found comment start, find end of line
+      let start := i
+      let mut j := i
+      while j < chars.length && chars[j]! != '\n' do
+        j := j + 1
+      -- Comment range is [start, j) - excludes the newline
+      ranges := ranges.push (start, j)
+      i := j + 1
+    else
+      i := i + 1
+  return ranges
+
+/-- Check if a character index is inside any comment range -/
+public def Brackets.isInComment (idx : Nat) (commentRanges : Array (Nat × Nat)) : Bool :=
+  commentRanges.any fun (start, stop) => idx >= start && idx < stop
+
+/-- Collect brackets from a string, returning updated state and array of (char index, bracket id).
+    Skips brackets that are inside line comments. -/
+public def Brackets.collectFromString (st : Brackets.CollectState) (content : String) (shouldColor : Bool) : Brackets.CollectState × Array (Nat × Nat) := Id.run do
+  if !shouldColor then
+    return (st, #[])
+  let mut st := st
+  let mut positions : Array (Nat × Nat) := #[]  -- (character index, bracket id)
+  let chars := content.toList
+  -- Find comment ranges to skip
+  let commentRanges := Brackets.findCommentRanges content
+  for h : i in [:chars.length] do
+    let c := chars[i]
+    if Brackets.isBracket c then
+      -- Skip brackets inside comments
+      if Brackets.isInComment i commentRanges then
+        continue
+      let id := st.nextId
+      st := { st with
+        nextId := id + 1
+        brackets := st.brackets.push { id, char := c, isOpen := Brackets.isOpenBracket c }
+      }
+      positions := positions.push (i, id)
+  return (st, positions)
+
+/-- Match all collected brackets and build the color map -/
+public def Brackets.matchBrackets (brackets : Array Brackets.BracketPos) : Std.HashMap Nat Brackets.BracketColor := Id.run do
+  let mut st : Brackets.MatchState := {}
+  for b in brackets do
+    if b.isOpen then
+      st := st.pushOpen b.id b.char
+    else
+      st := st.popClose b.id b.char
+  st := st.markUnmatched
+  return st.colorMap
+
+/-- Render a string with bracket coloring and comment highlighting applied.
+    Brackets inside comments are NOT colored (they won't be in positions array).
+    Comment regions are wrapped in `<span class="line-comment">`. -/
+public def Brackets.renderStringWithBrackets (content : String) (positions : Array (Nat × Nat)) (colorMap : Std.HashMap Nat Brackets.BracketColor) : Html := Id.run do
+  let chars := content.toList
+  let commentRanges := Brackets.findCommentRanges content
+
+  if positions.isEmpty && commentRanges.isEmpty then
+    return Html.text true content
+
+  let mut result : Html := .empty
+  let mut lastIdx : Nat := 0
+  let mut posIdx := 0
+  let mut commentIdx := 0
+
+  -- Process character by character, handling brackets and comment boundaries
+  while lastIdx < chars.length do
+    -- Check if we're at a bracket position
+    let atBracket := posIdx < positions.size && positions[posIdx]!.1 == lastIdx
+
+    -- Check if we're at a comment start
+    let atCommentStart := commentIdx < commentRanges.size && commentRanges[commentIdx]!.1 == lastIdx
+
+    if atBracket then
+      let (bracketIdx, bracketId) := positions[posIdx]!
+      let bracketChar := chars.getD bracketIdx ' '
+      let bracketStr := String.singleton bracketChar
+      let color := colorMap[bracketId]? |>.getD Brackets.BracketColor.error
+      let cls := color.toClass
+      result := result ++ {{<span class={{cls}}>{{bracketStr}}</span>}}
+      lastIdx := lastIdx + 1
+      posIdx := posIdx + 1
+    else if atCommentStart then
+      -- Render the entire comment as a single span
+      let (start, stop) := commentRanges[commentIdx]!
+      let commentChars := chars.drop start |>.take (stop - start)
+      let commentText := String.ofList commentChars
+      result := result ++ {{<span class="line-comment">{{commentText}}</span>}}
+      lastIdx := stop
+      commentIdx := commentIdx + 1
+    else
+      -- Regular text - find next interesting position (bracket or comment start)
+      let nextBracket := if posIdx < positions.size then positions[posIdx]!.1 else chars.length
+      let nextComment := if commentIdx < commentRanges.size then commentRanges[commentIdx]!.1 else chars.length
+      let nextPos := min nextBracket nextComment
+      let segmentChars := chars.drop lastIdx |>.take (nextPos - lastIdx)
+      let segmentText := String.ofList segmentChars
+      if !segmentText.isEmpty then
+        result := result ++ Html.text true segmentText
+      lastIdx := nextPos
+
+  return result
+
+/-- Collect all brackets from highlighted code (first pass) -/
+public partial def Brackets.collectFromHighlighted (hl : Highlighted) : Brackets.CollectState := Id.run do
+  let mut st : Brackets.CollectState := {}
+  st := go st hl
+  return st
+where
+  go (st : Brackets.CollectState) : Highlighted → Brackets.CollectState
+    | .token t =>
+      let shouldColor := Brackets.shouldColorBrackets t.kind
+      (Brackets.collectFromString st t.content shouldColor).1
+    | .text str | .unparsed str =>
+      (Brackets.collectFromString st str true).1
+    | .span _ hl => go st hl
+    | .tactics _ _ _ hl => go st hl
+    | .point _ _ => st
+    | .seq hls => hls.foldl go st
+
+/-- Render token content with bracket coloring -/
+public defmethod Token.htmlContentWithBrackets (tok : Token) (colorMap : Std.HashMap Nat Brackets.BracketColor) : StateM Nat Html := do
+  let content := tok.content
+  let shouldColor := Brackets.shouldColorBrackets tok.kind
+  if !shouldColor then
+    return content
+  -- Collect bracket positions in this token
+  let st : Brackets.CollectState := { nextId := ← get }
+  let (st', positions) := Brackets.collectFromString st content shouldColor
+  set st'.nextId
+  if positions.isEmpty then
+    return content
+  return Brackets.renderStringWithBrackets content positions colorMap
+
+/-- Render a token with bracket coloring -/
+public defmethod Token.toHtmlWithBrackets (tok : Token) (colorMap : Std.HashMap Nat Brackets.BracketColor) : StateM Nat (HighlightHtmlM g Html) := do
+  let content ← tok.htmlContentWithBrackets colorMap
+  return do
+    let hoverId ← tok.kind.hover?
+    let idAttr ← tok.kind.idAttr
+    let hoverAttr := hoverId.map (fun i => #[("data-verso-hover", toString i)]) |>.getD #[]
+    tok.kind.addLink {{
+      <span class={{tok.kind.«class» ++ " token"}} data-binding={{tok.kind.data}} {{hoverAttr}} {{idAttr}}>{{content}}</span>
+    }}
+
+/-- Render text/unparsed content with bracket coloring and comment highlighting -/
+public def renderTextWithBrackets (str : String) (colorMap : Std.HashMap Nat Brackets.BracketColor) : StateM Nat Html := do
+  let st : Brackets.CollectState := { nextId := ← get }
+  let (st', positions) := Brackets.collectFromString st str true
+  set st'.nextId
+
+  -- renderStringWithBrackets now handles both brackets and comments together
+  let inner := Brackets.renderStringWithBrackets str positions colorMap
+  return {{<span class="inter-text">{{inner}}</span>}}
+
+/-- Render highlighted code with bracket coloring (second pass) -/
+public partial defmethod Highlighted.toHtmlWithBrackets (hl : Highlighted) (colorMap : Std.HashMap Nat Brackets.BracketColor) : StateM Nat (HighlightHtmlM g Html) :=
+  go hl
+where
+  go : Highlighted → StateM Nat (HighlightHtmlM g Html)
+    | .token t => t.toHtmlWithBrackets colorMap
+    | .text str | .unparsed str => do
+      let html ← renderTextWithBrackets str colorMap
+      return pure html
+    | .span infos hl => do
+      let innerM ← go hl
+      return do
+        if let some cls := spanClass infos then
+          pure {{<span class={{"has-info " ++ cls}}>
+              <span class="hover-container">
+                <span class={{"hover-info messages"}}>
+                  {{←  infos.mapM fun (s, info) => do return {{
+                    <code class={{"verso-message " ++ s.«class»}}>{{← info.toHtml [] 10 Highlighted.toHtml}}</code> }}
+                  }}
+                </span>
+              </span>
+              {{← innerM}}
+            </span>
+          }}
+        else
+          panic! "No highlights!"
+    | .tactics info startPos endPos hl => do
+      let innerM ← go hl
+      return do
+        if (← options).inlineProofStates then
+          let visibleStates := (← options).visibleProofStates
+          let checkedAttr :=
+            if visibleStates.isVisible startPos endPos then #[("checked", "checked")] else #[]
+          let id ← uniqueId (base := s!"tactic-state-{hash info}-{startPos}-{endPos}")
+          pure {{
+            <span class="tactic">
+              <label for={{id}}>{{← innerM}}</label>
+              <input type="checkbox" class="tactic-toggle" id={{id}} {{checkedAttr}}/>
+              <span class="tactic-state">
+                {{← if info.isEmpty then
+                    pure {{"All goals completed! 🐙"}}
+                  else
+                    .seq <$> info.mapIdxM (fun i x => x.toHtml Highlighted.toHtml i)}}
+              </span>
+            </span>
+          }}
+        else
+          innerM
+    | .point s info => do
+      return do
+        let info ← info.toHtml [] 10 Highlighted.toHtml
+        return {{
+          <span class={{"verso-message " ++ s.«class»}}>{{info}}</span>
+        }}
+    | .seq hls => do
+      let mut results : Array (HighlightHtmlM g Html) := #[]
+      for hl in hls do
+        results := results.push (← go hl)
+      return results.mapM id
+
+/--
+Render highlighted code to HTML with rainbow bracket matching.
+
+This performs a two-pass algorithm:
+1. First pass: Collect all brackets and match pairs
+2. Second pass: Render HTML with bracket coloring applied
+
+Brackets inside string literals and comments are not colored.
+Matched pairs cycle through 6 colors based on nesting depth.
+Unmatched brackets are marked with an error color.
+-/
+public defmethod Highlighted.toHtmlRainbow (hl : Highlighted) : HighlightHtmlM g Html := do
+  -- First pass: collect and match brackets
+  let collectState : Brackets.CollectState := Brackets.collectFromHighlighted hl
+  let colorMap := Brackets.matchBrackets collectState.brackets
+  -- Second pass: render with coloring
+  let (renderM, _) := hl.toHtmlWithBrackets colorMap |>.run 0
+  renderM
+
+/--
+Render highlighted code as a block with rainbow bracket matching.
+-/
+public defmethod Highlighted.blockHtmlRainbow (contextName : String) (code : Highlighted) (trim : Bool := true) (htmlId : Option String := none) : HighlightHtmlM g Html := do
+  let code := if trim then code.trim else code
+  let idAttr := htmlId.map (fun x => #[("id", x)]) |>.getD #[]
+  pure {{ <code class="hl lean block" "data-lean-context"={{toString contextName}} {{idAttr}}> {{ ← code.toHtmlRainbow }} </code> }}
+
+/--
+Render highlighted code inline with rainbow bracket matching.
+-/
+public defmethod Highlighted.inlineHtmlRainbow (contextName : Option String) (code : Highlighted) (trim : Bool := true) (htmlId : Option String := none) : HighlightHtmlM g Html := do
+  let code := if trim then code.trim else code
+  let idAttr := htmlId.map (fun x => #[("id", x)]) |>.getD #[]
+  if let some ctx := contextName then
+    pure {{ <code class="hl lean inline" "data-lean-context"={{toString ctx}} {{idAttr}}> {{ ← code.toHtmlRainbow }} </code> }}
+  else
+    pure {{ <code class="hl lean inline" {{idAttr}}> {{ ← code.toHtmlRainbow }} </code> }}
+
 public defmethod Highlighted.blockHtml (contextName : String) (code : Highlighted) (trim : Bool := true) (htmlId : Option String := none) : HighlightHtmlM g Html := do
   let code := if trim then code.trim else code
   let idAttr := htmlId.map (fun x => #[("id", x)]) |>.getD #[]
@@ -696,6 +1101,21 @@ public def highlightingStyle : String := "
   font-weight: normal;
   font-style: normal;
   font-family: var(--verso-code-font-family,);
+}
+
+/* Rainbow brackets - light mode */
+.hl.lean .lean-bracket-1 { color: #d000ff; }
+.hl.lean .lean-bracket-2 { color: #5126ff; }
+.hl.lean .lean-bracket-3 { color: #0184BC; }
+.hl.lean .lean-bracket-4 { color: #4078F2; }
+.hl.lean .lean-bracket-5 { color: #50A14F; }
+.hl.lean .lean-bracket-6 { color: #E45649; }
+.hl.lean .lean-bracket-error { color: #ff0000; font-weight: bold; }
+
+/* Line comments */
+.hl.lean .line-comment {
+  color: #6a9955;
+  font-style: italic;
 }
 
 .hover-container {
@@ -1319,6 +1739,23 @@ Some CSS frameworks customize details/summary in ways not compatible with Verso'
 
 .verso-message .text {
   white-space: pre-wrap;
+}
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+  /* Rainbow brackets - brighter for dark mode */
+  .hl.lean .lean-bracket-1 { color: #ff79c6; }
+  .hl.lean .lean-bracket-2 { color: #bd93f9; }
+  .hl.lean .lean-bracket-3 { color: #8be9fd; }
+  .hl.lean .lean-bracket-4 { color: #50fa7b; }
+  .hl.lean .lean-bracket-5 { color: #ffb86c; }
+  .hl.lean .lean-bracket-6 { color: #ff5555; }
+  .hl.lean .lean-bracket-error { color: #ff4444; font-weight: bold; }
+
+  /* Line comments */
+  .hl.lean .line-comment {
+    color: #6a9955;
+  }
 }
 
 "
