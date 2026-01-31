@@ -1,8 +1,8 @@
 import Lake
 open Lake DSL
 
--- Using local subverso fork with lineComment support
-require subverso from ".." / "subverso"
+-- Using forked subverso with SBS enhancements
+require subverso from git "https://github.com/e-vergo/subverso.git"@"main"
 require MD4Lean from git "https://github.com/acmepjz/md4lean"@"main"
 require plausible from git "https://github.com/leanprover-community/plausible"@"main"
 
