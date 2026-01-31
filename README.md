@@ -9,9 +9,9 @@ This is a fork of [Verso](https://github.com/leanprover/verso), a document autho
 This fork extends Verso with two new genres for the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain:
 
 1. **SBSBlueprint** - A genre for mathematical formalization blueprints
-2. **VersoPaper** - A genre for academic papers with blueprint integration
+2. **VersoPaper** (also called **Paper**) - A genre for academic papers with blueprint integration
 
-It also adds **rainbow bracket matching** to Verso's code highlighting system.
+It also adds **rainbow bracket matching** and **line comment highlighting** to Verso's code rendering system.
 
 All original Verso functionality remains intact.
 
@@ -19,7 +19,7 @@ All original Verso functionality remains intact.
 
 ### SBSBlueprint
 
-A document genre for mathematical blueprints that pairs LaTeX theorem statements with Lean formalizations in a side-by-side display.
+A document genre for mathematical blueprints that pairs LaTeX theorem statements with Lean formalizations in a side-by-side display. Defined in `src/verso-sbs/SBSBlueprint/Genre.lean`.
 
 **Block directives:**
 
@@ -50,9 +50,11 @@ def SBSBlueprint : Genre where
   TraverseState := TraverseState
 ```
 
-### VersoPaper
+The `BlueprintMetadata` structure supports the full set of `@[blueprint]` metadata options: `id`, `title`, `keyDeclaration`, `message`, `priorityItem`, `blocked`, `potentialIssue`, `technicalDebt`, `misc`, and `manualStatus`.
 
-A genre for academic papers that can reference pre-built blueprint artifacts.
+### VersoPaper (Paper)
+
+A genre for academic papers that can reference pre-built blueprint artifacts. Defined in `src/verso-paper/VersoPaper/Basic.lean`.
 
 **Block directives:**
 
@@ -64,15 +66,28 @@ A genre for academic papers that can reference pre-built blueprint artifacts.
 | `:::leanNode "label"` | Insert a Lean node by label |
 | `:::leanModule "ModuleName"` | Insert all nodes from a module |
 | `:::htmlDiv "classes"` | Wrapper div with custom CSS classes |
-| `:::htmlWrapper "tag"` | Wrapper with custom HTML tag |
+| `:::htmlWrapper "tag"` | Wrapper with custom HTML tag and attributes |
 
 **Inline roles:**
 
 | Role | Purpose |
 |------|---------|
 | `{nodeRef "label"}` | Reference link to a blueprint node |
-| `{lean "code"}` | Inline Lean code |
-| `{span "classes"}` | Inline span with CSS classes |
+| `{leanCode}` | Inline Lean code (wrapped in span) |
+| `{htmlSpan "classes"}` | Inline span with CSS classes |
+
+**Genre definition:**
+
+```lean
+def Paper : Genre where
+  PartMetadata := Paper.PartMetadata
+  Block := Paper.BlockExt
+  Inline := Paper.InlineExt
+  TraverseContext := Paper.TraverseContext
+  TraverseState := Paper.TraverseState
+```
+
+The Paper genre's `PartMetadata` supports `shortTitle`, `number`, `htmlId`, and `showInToc` options for section configuration.
 
 ## Node Status Model
 
@@ -87,18 +102,27 @@ Both genres use a 6-status color model for tracking formalization progress:
 | `fullyProven` | Forest Green | #228B22 | Auto-computed (all ancestors proven) |
 | `mathlibReady` | Light Blue | #87CEEB | Manual flag |
 
+The `NodeStatus` type in `SBSBlueprint/Genre.lean` provides JSON serialization with backwards compatibility: `"stated"` maps to `.notReady` and `"inMathlib"` maps to `.mathlibReady`.
+
 ## Rainbow Bracket Matching
 
 This fork adds rainbow bracket matching to Verso's code highlighting system. The implementation is in `src/verso/Verso/Code/Highlighted.lean`.
+
+**Algorithm:**
+
+The implementation uses a two-pass approach:
+1. **Collection pass**: Walks the `Highlighted` AST to find all brackets, recording their positions and IDs
+2. **Matching pass**: Uses per-type stacks (`()`, `[]`, `{}`) but a **single global depth counter** shared across all bracket types for visual nesting
+3. **Rendering pass**: Generates HTML with color classes based on assigned depths
 
 **Features:**
 - Paired bracket matching for `()`, `[]`, and `{}`
 - 6-color cycling based on nesting depth (shared across all bracket types)
 - Unmatched brackets marked with error color
-- Brackets inside string literals and comments are not colored
-- Line comment highlighting (`-- ...` to end of line)
+- Brackets inside string literals (`Token.Kind.str`) and doc comments (`Token.Kind.docComment`) are not colored
+- Line comment highlighting (`-- ...` to end of line) via `findCommentRanges`
 
-**Usage:**
+**API:**
 
 ```lean
 -- Standard rendering (no rainbow brackets)
@@ -110,7 +134,29 @@ hl.blockHtmlRainbow contextName code
 hl.inlineHtmlRainbow contextName code
 ```
 
-**CSS classes:** `.lean-bracket-1` through `.lean-bracket-6` for matched brackets, `.lean-bracket-error` for unmatched.
+**CSS classes:**
+- `.lean-bracket-1` through `.lean-bracket-6` for matched brackets at different depths
+- `.lean-bracket-error` for unmatched brackets
+- `.line-comment` for line comments
+
+The CSS includes both light and dark mode variants, embedded in `highlightingStyle`.
+
+**Key types:**
+
+```lean
+-- Color assignment
+inductive Brackets.BracketColor where
+  | matched (depth : Nat)  -- depth mod 6 gives class index
+  | error
+
+-- Match state with shared depth
+structure Brackets.MatchState where
+  parenStack : Array Nat
+  bracketStack : Array Nat
+  braceStack : Array Nat
+  globalDepth : Nat  -- Shared across all bracket types
+  colorMap : Std.HashMap Nat Brackets.BracketColor
+```
 
 ## Package Structure
 
@@ -126,20 +172,22 @@ hl.inlineHtmlRainbow contextName code
 
 | Module | Purpose |
 |--------|---------|
-| `SBSBlueprint.Genre` | Genre definition, types, traversal instances |
-| `SBSBlueprint.Hooks` | Directive and role expanders |
+| `SBSBlueprint.Genre` | Genre definition, `NodeStatus`, `BlockExt`, `InlineExt`, `BlueprintMetadata`, traversal instances |
+| `SBSBlueprint.Hooks` | Directive and role expanders (`@[directive_expander]`, `@[role_expander]`) |
 | `SBSBlueprint.Manifest` | Manifest types and loading |
 | `SBSBlueprint.Render` | HTML rendering functions |
 | `SBSBlueprint.Main` | Additional utilities |
+
+The Hooks module uses `@[implemented_by]` opaque helpers to avoid `Block.other` name resolution ambiguity at elaboration time.
 
 ### VersoPaper Module Structure
 
 | Module | Purpose |
 |--------|---------|
-| `VersoPaper.Basic` | Genre definition and types |
-| `VersoPaper.Blocks` | Block directive handlers |
-| `VersoPaper.Manifest` | Manifest types and loading |
-| `VersoPaper.Html` | HTML rendering functions |
+| `VersoPaper.Basic` | Genre definition, `BlockExt`, `InlineExt`, `PartMetadata`, `Config`, traversal types |
+| `VersoPaper.Blocks` | Block directive and role handlers |
+| `VersoPaper.Manifest` | Manifest types (`Node`, `Manifest`) and loading |
+| `VersoPaper.Html` | `GenreHtml Paper` instance, CSS, helper rendering functions |
 
 ## Usage
 
@@ -180,6 +228,28 @@ This displays the main theorem with its Lean formalization.
 This inserts all nodes from the specified module.
 ```
 
+### Writing a Paper Document
+
+```lean
+import VersoPaper
+
+open Verso.Genre.Paper
+
+#doc (Paper) "My Paper" =>
+
+# Introduction
+
+See {nodeRef "thm:main"}`the main theorem` for details.
+
+:::paperStatement "thm:main"
+
+The statement appears here with its Lean signature.
+
+:::paperFull "lem:helper"
+
+Full side-by-side display of statement and proof.
+```
+
 ### Manifest Integration
 
 Both genres load `manifest.json` (generated by Dress) at render time. The manifest contains:
@@ -199,13 +269,6 @@ Pre-rendered artifacts are loaded from `.lake/build/dressed/{Module}/{label}/`:
 | `decl.json` | Metadata |
 | `decl.hovers.json` | Hover tooltip data |
 
-## Dependencies
-
-- **Lean:** v4.27.0
-- **SubVerso:** Fork at https://github.com/e-vergo/subverso.git (includes O(1) indexed lookups)
-- **MD4Lean:** Markdown parsing
-- **Plausible:** Property-based testing
-
 ## Integration with Side-by-Side Blueprint
 
 This fork is part of the larger Side-by-Side Blueprint toolchain:
@@ -216,12 +279,24 @@ SubVerso -> LeanArchitect -> Dress -> Runway
               +-> Verso (this fork)
 ```
 
-The typical build flow:
+**Dependency relationships:**
+- SubVerso provides syntax highlighting with O(1) indexed lookups via `InfoTable`
+- LeanArchitect defines the `@[blueprint]` attribute and `Node` types
+- Dress captures artifacts during compilation and generates `manifest.json`
+- Runway generates the final site, loading manifest and using Verso for document rendering
 
-1. **LeanArchitect** defines `@[blueprint]` attribute for marking declarations
-2. **Dress** captures artifacts during Lean compilation
-3. **Verso** provides document genres for rendering
-4. **Runway** generates the final site using Verso output
+**Build flow:**
+1. **LeanArchitect** marks declarations with `@[blueprint]` attribute
+2. **Dress** captures artifacts during Lean compilation (with `BLUEPRINT_DRESS=1`)
+3. **Verso** provides document genres for rendering (SBSBlueprint for blueprints, VersoPaper for papers)
+4. **Runway** generates the final site using Verso output and manifest data
+
+## Dependencies
+
+- **Lean:** v4.27.0
+- **SubVerso:** Fork at https://github.com/e-vergo/subverso.git (includes O(1) indexed lookups via `InfoTable`)
+- **MD4Lean:** Markdown parsing
+- **Plausible:** Property-based testing
 
 ## Testing
 
