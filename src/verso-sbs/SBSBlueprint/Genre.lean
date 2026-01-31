@@ -494,71 +494,8 @@ instance : Traverse SBSBlueprint TraverseM where
 /-!
 ## HTML Generation
 
-The GenreHtml instance for rendering blueprint documents to HTML.
-This is a placeholder that will be fully implemented in Render.lean.
+The GenreHtml instance is defined in Render.lean, which has access to
+the RenderContext needed for loading artifacts and manifest data.
 -/
-
-open Verso.Output Html in
-instance : GenreHtml SBSBlueprint IO where
-  part _partHtml _metadata _part := do
-    -- Default part rendering - returning Html.empty triggers default behavior
-    pure Html.empty
-
-  block _inlineHtml goBlock ext content := do
-    -- Placeholder: actual rendering will be in Render.lean
-    match ext with
-    | .highlightedCode _ _ => pure {{ <pre class="lean-code">"(code)"</pre> }}
-    | .sideBySide label _ _ status => pure {{
-        <div class="side-by-side" id={{label}} data-status={{status.toIdent}}>
-          "(side-by-side placeholder)"
-        </div>
-      }}
-    | .theoremEnv kind label _ _ _ => pure {{
-        <div class={{s!"thm-env {kind}"}} id={{label}}>"(theorem placeholder)"</div>
-      }}
-    | .proofBlock _ => pure {{ <div class="proof">"(proof placeholder)"</div> }}
-    | .htmlDiv classes => do
-        pure {{ <div class={{classes}}>{{← content.mapM goBlock}}</div> }}
-    | .leanNode label => pure {{
-        <div class="lean-node-hook" data-label={{label}}>
-          "(leanNode hook - content loaded from manifest)"
-        </div>
-      }}
-    | .paperStatement label => pure {{
-        <div class="paper-statement-hook" data-label={{label}}>
-          "(paperStatement hook - content loaded from manifest)"
-        </div>
-      }}
-    | .paperFull label => pure {{
-        <div class="paper-full-hook" data-label={{label}}>
-          "(paperFull hook - content loaded from manifest)"
-        </div>
-      }}
-    | .paperProof label => pure {{
-        <div class="paper-proof-hook" data-label={{label}}>
-          "(paperProof hook - content loaded from manifest)"
-        </div>
-      }}
-    | .leanModule moduleName => pure {{
-        <div class="lean-module-hook" data-module={{moduleName}}>
-          "(leanModule hook - content loaded from manifest)"
-        </div>
-      }}
-
-  inline goInline ext content := do
-    -- Placeholder: actual rendering will be in Render.lean
-    match ext with
-    | .highlightedCode _ _ => pure {{ <code class="lean-inline">"(code)"</code> }}
-    | .nodeRef label resolvedUrl => do
-        let url := resolvedUrl.getD s!"#{label}"
-        pure {{ <a href={{url}} class="node-ref">{{← content.mapM goInline}}</a> }}
-    | .statusDot status => pure {{
-        <span class="status-dot" style={{s!"background-color: {status.color}"}}></span>
-      }}
-    | .leanDocLink declName url => do
-        let href := url.getD s!"#decl-{declName}"
-        pure {{ <a href={{href}} class="lean-doc-link">{{← content.mapM goInline}}</a> }}
-    | .htmlSpan classes => do
-        pure {{ <span class={{classes}}>{{← content.mapM goInline}}</span> }}
 
 end Verso.Genre.SBSBlueprint

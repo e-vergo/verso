@@ -19,6 +19,7 @@ import SBSBlueprint.Genre
 import SBSBlueprint.Hooks
 import SBSBlueprint.Manifest
 import SBSBlueprint.Render
+import SBSBlueprint.Main
 
 /-!
 # SBSBlueprint: Side-by-Side Blueprint Genre for Verso

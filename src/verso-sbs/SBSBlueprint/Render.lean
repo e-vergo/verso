@@ -164,14 +164,129 @@ structure ArtifactData where
   deriving Repr, Inhabited
 
 /--
+Normalize a label for filesystem lookup (replace `:` with `-`).
+This mirrors Dress.Paths.sanitizeLabel.
+-/
+def sanitizeLabel (label : String) : String :=
+  label.replace ":" "-"
+
+/--
+Search for an artifact directory by label under the artifact base directory.
+Returns the path to the artifact directory if found.
+
+Artifacts are stored at `.lake/build/dressed/{ModulePath}/{sanitized-label}/`.
+Since we don't know the module path, we search using a worklist approach.
+-/
+def findArtifactDir (baseDir : System.FilePath) (label : String) : IO (Option System.FilePath) := do
+  let sanitized := sanitizeLabel label
+  if !(← baseDir.pathExists) then return none
+
+  -- Use a worklist approach with depth limit to avoid termination issues
+  let maxDepth := 10
+  let mut worklist : Array (System.FilePath × Nat) := #[(baseDir, 0)]
+  let mut result : Option System.FilePath := none
+
+  while h : worklist.size > 0 do
+    let (dir, depth) := worklist[0]'(Nat.zero_lt_of_lt h)
+    worklist := worklist.eraseIdx 0
+
+    if depth > maxDepth then continue
+
+    let entries ← dir.readDir
+    for entry in entries do
+      if ← entry.path.isDir then
+        -- Check if this directory name matches our sanitized label
+        if entry.fileName == sanitized then
+          -- Verify it contains decl.json
+          let jsonPath := entry.path / "decl.json"
+          if ← jsonPath.pathExists then
+            result := some entry.path
+            worklist := #[]  -- Clear worklist to exit
+            break
+        -- Add subdirectory to worklist
+        worklist := worklist.push (entry.path, depth + 1)
+
+  return result
+
+/--
+Parse artifact JSON metadata.
+-/
+structure ArtifactJson where
+  name : String := ""
+  label : String := ""
+  -- highlighting is a complex structure we don't need to fully parse
+  deriving Repr, Inhabited
+
+open Lean in
+instance : FromJson ArtifactJson where
+  fromJson? json := do
+    let name := (json.getObjValAs? String "name").toOption.getD ""
+    let label := (json.getObjValAs? String "label").toOption.getD ""
+    pure { name, label }
+
+/--
 Try to load artifact data for a given label.
 Returns default data if the artifact doesn't exist.
+
+Searches for artifacts under ctx.artifactDir (default: `.lake/build/dressed/`).
 -/
 def loadArtifact (ctx : RenderContext) (label : String) : IO ArtifactData := do
-  -- For now, return placeholder data
-  -- Full implementation would read from artifact files:
-  -- {artifactDir}/{modulePath}/{label}/decl.html, decl.json, etc.
-  pure { status := .notReady }
+  -- Find the artifact directory
+  let artifactDir? ← findArtifactDir ctx.artifactDir label
+  match artifactDir? with
+  | none =>
+    -- Artifact not found - return default
+    return { status := .notReady }
+  | some artifactDir =>
+    -- Read decl.html for rendered code
+    let htmlPath := artifactDir / "decl.html"
+    let signatureHtml ← if ← htmlPath.pathExists then
+      some <$> IO.FS.readFile htmlPath
+    else
+      pure none
+
+    -- Read decl.hovers.json for hover data (optional)
+    let hoversPath := artifactDir / "decl.hovers.json"
+    let hoverData ← if ← hoversPath.pathExists then
+      some <$> IO.FS.readFile hoversPath
+    else
+      pure none
+
+    -- Read decl.json for metadata
+    let jsonPath := artifactDir / "decl.json"
+    let metadata ← if ← jsonPath.pathExists then
+      let content ← IO.FS.readFile jsonPath
+      match Lean.Json.parse content with
+      | .ok json =>
+        match Lean.FromJson.fromJson? (α := ArtifactJson) json with
+        | .ok m => pure (some m)
+        | .error _ => pure none
+      | .error _ => pure none
+    else
+      pure none
+
+    -- Look up status from manifest if available
+    let status := match ctx.manifest.bind (·.findNode? label) with
+      | some _nodeInfo =>
+        -- TODO: The manifest currently doesn't store status per node
+        -- For now, we infer based on whether we have Lean code
+        if signatureHtml.isSome then .proven else .notReady
+      | none => .notReady
+
+    -- Extract declaration name for fallback display
+    let declNames := match metadata with
+      | some m => if m.name.isEmpty then #[] else #[m.name]
+      | none => #[]
+
+    return {
+      signatureHtml
+      proofBodyHtml := none  -- Not currently separated in artifacts
+      hoverData
+      status
+      envType := "theorem"  -- Default; could be enhanced with more metadata
+      displayLabel := some label
+      declNames
+    }
 
 /-!
 ## Status Dot Rendering
@@ -557,8 +672,9 @@ def renderBlockExt (ctx : RenderContext) (ext : BlockExt) : IO Html := do
       .tag "code" #[("class", "hl lean")] (.text true s!"(highlighted code: {repr highlighted})")
     ))
 
-  | .sideBySide label latexContent leanCode status =>
+  | .sideBySide label _latexContent leanCode status =>
     -- Direct side-by-side content (not a hook)
+    -- Note: latexContent is already Html; in full implementation would serialize it
     let leanHtml := match leanCode with
       | some _hl => "(Lean code)"  -- Would render highlighted code
       | none => ""
@@ -567,7 +683,7 @@ def renderBlockExt (ctx : RenderContext) (ext : BlockExt) : IO Html := do
       "theorem"
       label
       status
-      "(LaTeX content)"  -- latexContent is already Html, would need to serialize
+      "(LaTeX content)"  -- Placeholder until Html serialization is implemented
       none
       (if leanHtml.isEmpty then none else some leanHtml)
       none
@@ -645,3 +761,138 @@ def renderInlineExt (ctx : RenderContext) (ext : InlineExt) (content : Html) : I
     pure (.tag "span" #[("class", classes)] content)
 
 end Verso.Genre.SBSBlueprint.Render
+
+/-!
+## GenreHtml Instance
+
+The GenreHtml instance for SBSBlueprint uses a ReaderT monad to access
+the RenderContext, which provides manifest data and artifact paths.
+-/
+
+namespace Verso.Genre.SBSBlueprint
+
+section GenreHtmlInstance
+
+open Verso.Output Html
+open Verso.Doc.Html
+open Verso.Genre.SBSBlueprint.Render
+
+/--
+The monad for HTML rendering with access to RenderContext.
+-/
+abbrev RenderM := ReaderT RenderContext IO
+
+/--
+Lift an IO action that needs RenderContext into HtmlT.
+-/
+def liftRenderIO (action : RenderContext → IO α) : HtmlT SBSBlueprint RenderM α := do
+  -- Access the RenderContext by lifting through the monad stack
+  -- HtmlT g m = ReaderT (HtmlT.Context g m) (StateT _ m)
+  -- m = ReaderT RenderContext IO
+  -- So we need to lift from m to access the reader
+  let ctx ← (readThe RenderContext : RenderM RenderContext)
+  action ctx
+
+instance : GenreHtml SBSBlueprint RenderM where
+  part _partHtml _metadata _part := do
+    -- Default part rendering - returning Html.empty triggers default behavior
+    pure Html.empty
+
+  block _inlineHtml goBlock ext content := do
+    match ext with
+    | .highlightedCode _opts _highlighted =>
+      -- TODO: Implement proper highlighted code rendering using SubVerso
+      pure {{ <pre class="lean-code hl lean">"(highlighted code)"</pre> }}
+
+    | .sideBySide label _latexContent leanCode status =>
+      -- Direct side-by-side content (pre-constructed, not a hook)
+      let leanHtml := match leanCode with
+        | some _hl => some "(Lean code)"  -- Would render highlighted code
+        | none => none
+      pure (renderSideBySide
+        label
+        "theorem"
+        label
+        status
+        "(LaTeX content)"  -- latexContent is already Html
+        none
+        leanHtml
+        none
+        none
+        #[])
+
+    | .theoremEnv kind label title statement proof =>
+      -- Theorem environment wrapper
+      let displayLabel := title.getD label
+      pure (.tag "div" #[
+        ("class", s!"{kind}_thmwrapper theorem-style-{kind}"),
+        ("id", normalizeId label)
+      ] (.seq #[
+        .tag "div" #[("class", s!"{kind}_thmheading")] (
+          .seq #[
+            .tag "span" #[("class", s!"{kind}_thmcaption")] (.text true (capitalize kind)),
+            .tag "span" #[("class", s!"{kind}_thmlabel")] (.text true displayLabel)
+          ]
+        ),
+        .tag "div" #[("class", s!"{kind}_thmcontent")] statement,
+        match proof with
+        | some p => .tag "div" #[("class", "proof")] p
+        | none => Html.empty
+      ]))
+
+    | .proofBlock contentHtml =>
+      pure (.tag "div" #[("class", "proof_wrapper")] (
+        .seq #[
+          .tag "div" #[("class", "proof_heading")] (
+            .tag "span" #[("class", "proof_caption")] (.text true "Proof")
+          ),
+          .tag "div" #[("class", "proof_content")] contentHtml
+        ]
+      ))
+
+    | .htmlDiv classes =>
+      -- Div wrapper - render children
+      let children ← content.mapM goBlock
+      pure (.tag "div" #[("class", classes)] (.seq children))
+
+    | .leanNode label =>
+      liftRenderIO fun ctx => renderLeanNode ctx label
+
+    | .paperStatement label =>
+      liftRenderIO fun ctx => renderPaperStatement ctx label
+
+    | .paperFull label =>
+      liftRenderIO fun ctx => renderPaperFull ctx label
+
+    | .paperProof label =>
+      liftRenderIO fun ctx => renderPaperProof ctx label
+
+    | .leanModule moduleName =>
+      liftRenderIO fun ctx => renderLeanModule ctx moduleName
+
+  inline goInline ext content := do
+    let renderedContent ← content.mapM goInline
+    let contentHtml := Html.seq renderedContent
+    match ext with
+    | .highlightedCode _opts _highlighted =>
+      -- TODO: Implement proper inline highlighted code
+      pure {{ <code class="lean-inline hl lean">"(inline code)"</code> }}
+
+    | .nodeRef label resolvedUrl =>
+      liftRenderIO fun ctx =>
+        let url := resolvedUrl.getD (ctx.baseUrl ++ "#" ++ normalizeId label)
+        pure (.tag "a" #[("href", url), ("class", "node-ref")] contentHtml)
+
+    | .statusDot status =>
+      pure (renderStatusDot status)
+
+    | .leanDocLink declName url =>
+      let href := url.getD s!"#decl-{declName}"
+      pure (.tag "a" #[("href", href), ("class", "lean-doc-link")] contentHtml)
+
+    | .htmlSpan classes =>
+      pure (.tag "span" #[("class", classes)] contentHtml)
+
+end GenreHtmlInstance
+
+end Verso.Genre.SBSBlueprint
