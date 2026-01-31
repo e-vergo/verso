@@ -1,42 +1,27 @@
 # Verso (Side-by-Side Blueprint Fork)
 
-This is a fork of [Verso](https://github.com/leanprover/verso), the official authoring tool for Lean documentation developed by David Thrane Christiansen. This fork adds genres for mathematical blueprint documents that display formal Lean proofs alongside LaTeX theorem statements.
+This is a fork of [Verso](https://github.com/leanprover/verso), a document authoring framework for Lean developed by David Thrane Christiansen at the Lean FRO. This fork adds genres for mathematical blueprint documents that display formal Lean proofs alongside LaTeX theorem statements.
 
-## Attribution
+**Upstream repository:** https://github.com/leanprover/verso
 
-The core Verso framework is developed by the Lean team at the Lean FRO. This fork adds the `SBSBlueprint` and `VersoPaper` genres for the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain. All original Verso functionality remains intact.
+## What This Fork Adds
 
-**Upstream repository**: https://github.com/leanprover/verso
+This fork extends Verso with two new genres for the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain:
 
-## What is Verso?
+1. **SBSBlueprint** - A genre for mathematical formalization blueprints
+2. **VersoPaper** - A genre for academic papers with blueprint integration
 
-Verso is a document authoring system for Lean that provides:
+It also adds **rainbow bracket matching** to Verso's code highlighting system.
 
-- A Markdown-like concrete syntax for writing documents
-- Full access to Lean's metaprogramming API for custom extensions
-- Accurate syntax highlighting via integration with Lean's parser
-- Genre-based architecture for different document types (manuals, blogs, tutorials)
-- Cross-document hyperlinking via semantic reference databases
+All original Verso functionality remains intact.
 
-Documents in Verso are Lean programs that produce structured output, enabling compile-time verification of code examples and integration with the Lean environment.
+## Genres
 
-## Fork Additions
+### SBSBlueprint
 
-This fork adds two new genres to Verso:
+A document genre for mathematical blueprints that pairs LaTeX theorem statements with Lean formalizations in a side-by-side display.
 
-### SBSBlueprint Genre
-
-A genre for mathematical formalization blueprints that pairs LaTeX theorem statements with their Lean formalizations in a side-by-side display.
-
-**Key features**:
-
-- Side-by-side rendering of LaTeX and Lean code
-- 6-status color model (notReady, ready, sorry, proven, fullyProven, mathlibReady)
-- Dependency tracking via `\uses{}` relationships
-- Dashboard generation with project statistics
-- Integration with pre-rendered artifacts from [Dress](https://github.com/e-vergo/Dress)
-
-**Block directives**:
+**Block directives:**
 
 | Directive | Purpose |
 |-----------|---------|
@@ -46,7 +31,7 @@ A genre for mathematical formalization blueprints that pairs LaTeX theorem state
 | `:::paperProof "label"` | Proof body only |
 | `:::leanModule "Module.Name"` | All nodes from a module |
 
-**Inline roles**:
+**Inline roles:**
 
 | Role | Purpose |
 |------|---------|
@@ -54,22 +39,7 @@ A genre for mathematical formalization blueprints that pairs LaTeX theorem state
 | `{statusDot "proven"}` | Status indicator dot |
 | `{htmlSpan "class"}` | HTML span wrapper |
 
-### VersoPaper Genre
-
-A genre for academic papers with blueprint integration. Allows writing papers in pure Verso markup with hooks to pull pre-built artifacts.
-
-**Features**:
-
-- Same directive set as SBSBlueprint
-- Paper-specific styling with verification badges
-- Links back to the full blueprint
-- PDF generation support (via external LaTeX compilation)
-
-## Architecture
-
-### Genre Definition
-
-Both genres follow Verso's genre architecture:
+**Genre definition:**
 
 ```lean
 def SBSBlueprint : Genre where
@@ -80,63 +50,96 @@ def SBSBlueprint : Genre where
   TraverseState := TraverseState
 ```
 
-The `BlueprintMetadata` type captures per-section metadata:
+### VersoPaper
 
-```lean
-structure BlueprintMetadata where
-  id : Option String := none
-  title : Option String := none
-  keyDeclaration : Bool := false
-  message : Option String := none
-  priorityItem : Bool := false
-  blocked : Option String := none
-  potentialIssue : Option String := none
-  technicalDebt : Option String := none
-  misc : Option String := none
-  manualStatus : Option NodeStatus := none
-  number : Bool := true
-  htmlId : Option String := none
-```
+A genre for academic papers that can reference pre-built blueprint artifacts.
 
-### Node Status
+**Block directives:**
 
-Blueprint nodes have a 6-status color model:
+| Directive | Purpose |
+|-----------|---------|
+| `:::paperStatement "label"` | Insert LaTeX statement with link to Lean code |
+| `:::paperFull "label"` | Insert full side-by-side display |
+| `:::paperProof "label"` | Insert proof only |
+| `:::leanNode "label"` | Insert a Lean node by label |
+| `:::leanModule "ModuleName"` | Insert all nodes from a module |
+| `:::htmlDiv "classes"` | Wrapper div with custom CSS classes |
+| `:::htmlWrapper "tag"` | Wrapper with custom HTML tag |
 
-| Status | Color | Source |
-|--------|-------|--------|
-| `notReady` | Sandy Brown (#F4A460) | Default or manual flag |
-| `ready` | Light Sea Green (#20B2AA) | Manual flag |
-| `sorry` | Dark Red (#8B0000) | Auto-detected from proof |
-| `proven` | Light Green (#90EE90) | Auto-detected (complete proof) |
-| `fullyProven` | Forest Green (#228B22) | Auto-computed (all ancestors proven) |
-| `mathlibReady` | Light Blue (#87CEEB) | Manual flag |
+**Inline roles:**
 
-### Manifest Integration
-
-The genres load `manifest.json` (generated by Dress) at render time:
-
-```lean
-structure BlueprintManifest where
-  nodes : HashMap String String := {}  -- label -> URL
-  stats : StatusCounts := {}
-  checks : CheckResults := {}
-  keyDeclarations : Array String := #[]
-  messages : Array MessageItem := #[]
-  projectNotes : ProjectNotes := {}
-```
-
-The manifest is cached via an environment extension to avoid repeated file reads during elaboration.
-
-### Artifact Loading
-
-Pre-rendered artifacts are loaded from `.lake/build/dressed/{Module}/{label}/`:
-
-| File | Content |
+| Role | Purpose |
 |------|---------|
-| `decl.html` | Syntax-highlighted Lean code |
-| `decl.tex` | LaTeX source |
-| `decl.json` | Metadata (declaration names, etc.) |
-| `decl.hovers.json` | Hover tooltip data |
+| `{nodeRef "label"}` | Reference link to a blueprint node |
+| `{lean "code"}` | Inline Lean code |
+| `{span "classes"}` | Inline span with CSS classes |
+
+## Node Status Model
+
+Both genres use a 6-status color model for tracking formalization progress:
+
+| Status | Color | Hex | Source |
+|--------|-------|-----|--------|
+| `notReady` | Sandy Brown | #F4A460 | Default or manual flag |
+| `ready` | Light Sea Green | #20B2AA | Manual flag |
+| `sorry` | Dark Red | #8B0000 | Auto-detected from proof |
+| `proven` | Light Green | #90EE90 | Auto-detected (complete proof) |
+| `fullyProven` | Forest Green | #228B22 | Auto-computed (all ancestors proven) |
+| `mathlibReady` | Light Blue | #87CEEB | Manual flag |
+
+## Rainbow Bracket Matching
+
+This fork adds rainbow bracket matching to Verso's code highlighting system. The implementation is in `src/verso/Verso/Code/Highlighted.lean`.
+
+**Features:**
+- Paired bracket matching for `()`, `[]`, and `{}`
+- 6-color cycling based on nesting depth (shared across all bracket types)
+- Unmatched brackets marked with error color
+- Brackets inside string literals and comments are not colored
+- Line comment highlighting (`-- ...` to end of line)
+
+**Usage:**
+
+```lean
+-- Standard rendering (no rainbow brackets)
+hl.toHtml
+
+-- Rainbow bracket rendering
+hl.toHtmlRainbow
+hl.blockHtmlRainbow contextName code
+hl.inlineHtmlRainbow contextName code
+```
+
+**CSS classes:** `.lean-bracket-1` through `.lean-bracket-6` for matched brackets, `.lean-bracket-error` for unmatched.
+
+## Package Structure
+
+| Library | Location | Purpose |
+|---------|----------|---------|
+| `SBSBlueprint` | `src/verso-sbs/` | Blueprint genre |
+| `VersoPaper` | `src/verso-paper/` | Paper genre |
+| `Verso` | `src/verso/` | Core framework (upstream) |
+| `VersoManual` | `src/verso-manual/` | Manual genre (upstream) |
+| `VersoBlog` | `src/verso-blog/` | Blog genre (upstream) |
+
+### SBSBlueprint Module Structure
+
+| Module | Purpose |
+|--------|---------|
+| `SBSBlueprint.Genre` | Genre definition, types, traversal instances |
+| `SBSBlueprint.Hooks` | Directive and role expanders |
+| `SBSBlueprint.Manifest` | Manifest types and loading |
+| `SBSBlueprint.Render` | HTML rendering functions |
+| `SBSBlueprint.Main` | Additional utilities |
+
+### VersoPaper Module Structure
+
+| Module | Purpose |
+|--------|---------|
+| `VersoPaper.Basic` | Genre definition and types |
+| `VersoPaper.Blocks` | Block directive handlers |
+| `VersoPaper.Manifest` | Manifest types and loading |
+| `VersoPaper.Html` | HTML rendering functions |
 
 ## Usage
 
@@ -164,7 +167,6 @@ import SBSBlueprint
 
 open Verso.Genre.SBSBlueprint
 
--- Document structure using Verso syntax
 #doc (SBSBlueprint) "My Blueprint" =>
 
 # Chapter One
@@ -178,75 +180,48 @@ This displays the main theorem with its Lean formalization.
 This inserts all nodes from the specified module.
 ```
 
-### Rendering
+### Manifest Integration
 
-The genres provide `GenreHtml` instances for HTML generation. Rendering requires a `RenderContext`:
+Both genres load `manifest.json` (generated by Dress) at render time. The manifest contains:
 
-```lean
-structure RenderContext where
-  manifest : Option BlueprintManifest := none
-  baseUrl : String := "/"
-  artifactDir : System.FilePath := ".lake/build/dressed"
-  paperMode : Bool := false
-  blueprintBaseUrl : Option String := none
-```
+- Node URLs and metadata
+- Status counts
+- Validation check results
+- Key declarations
+- User messages
 
-## Package Structure
+Pre-rendered artifacts are loaded from `.lake/build/dressed/{Module}/{label}/`:
 
-| Library | Location | Purpose |
-|---------|----------|---------|
-| `SBSBlueprint` | `src/verso-sbs/` | Blueprint genre |
-| `VersoPaper` | `src/verso-paper/` | Paper genre |
-| `Verso` | `src/verso/` | Core framework (upstream) |
-| `VersoManual` | `src/verso-manual/` | Manual genre (upstream) |
-| `VersoBlog` | `src/verso-blog/` | Blog genre (upstream) |
-
-### SBSBlueprint Module Structure
-
-| Module | Purpose |
-|--------|---------|
-| `SBSBlueprint.Genre` | Genre definition, types, traversal instances |
-| `SBSBlueprint.Hooks` | Directive and role expanders |
-| `SBSBlueprint.Manifest` | Manifest types and loading |
-| `SBSBlueprint.Render` | HTML rendering functions |
-| `SBSBlueprint.Main` | Additional utilities |
+| File | Content |
+|------|---------|
+| `decl.html` | Syntax-highlighted Lean code |
+| `decl.tex` | LaTeX source |
+| `decl.json` | Metadata |
+| `decl.hovers.json` | Hover tooltip data |
 
 ## Dependencies
 
-This fork uses a modified SubVerso for syntax highlighting:
-
-```lean
-require subverso from git "https://github.com/e-vergo/subverso.git"@"main"
-```
-
-The SubVerso fork includes O(1) indexed lookups for performance and graceful error handling.
+- **Lean:** v4.27.0
+- **SubVerso:** Fork at https://github.com/e-vergo/subverso.git (includes O(1) indexed lookups)
+- **MD4Lean:** Markdown parsing
+- **Plausible:** Property-based testing
 
 ## Integration with Side-by-Side Blueprint
 
-This Verso fork is part of the larger Side-by-Side Blueprint toolchain:
+This fork is part of the larger Side-by-Side Blueprint toolchain:
 
-1. **LeanArchitect**: Defines `@[blueprint]` attribute for marking declarations
-2. **Dress**: Generates artifacts during Lean compilation
-3. **Verso (this fork)**: Provides document genres for rendering
-4. **Runway**: Site generator that consumes Verso output
+```
+SubVerso -> LeanArchitect -> Dress -> Runway
+              |
+              +-> Verso (this fork)
+```
 
 The typical build flow:
 
-```
-Lean source + @[blueprint] annotations
-    |
-    v
-Dress captures during elaboration
-    |
-    v
-Artifacts in .lake/build/dressed/
-    |
-    v
-Verso genres render using artifacts
-    |
-    v
-Runway generates final site
-```
+1. **LeanArchitect** defines `@[blueprint]` attribute for marking declarations
+2. **Dress** captures artifacts during Lean compilation
+3. **Verso** provides document genres for rendering
+4. **Runway** generates the final site using Verso output
 
 ## Testing
 
@@ -262,4 +237,4 @@ Browser tests for JavaScript functionality are in `browser-tests/` and require P
 
 Verso is licensed under the Apache 2.0 license. See [LICENSE](./LICENSE) for details.
 
-Third-party JavaScript components in `vendored-js/` are provided under the MIT license with their own copyright notices.
+The core Verso framework is copyright Lean FRO LLC. Fork additions are copyright Side-by-Side Blueprint Authors.
