@@ -709,66 +709,59 @@ deriving Inhabited
 
 /-- State for matching brackets -/
 public structure Brackets.MatchState where
-  /-- Stack for parentheses -/
-  parenStack : Array (Nat × Nat) := #[]  -- (id, depth)
+  /-- Stack for parentheses (stores id only, depth comes from globalDepth) -/
+  parenStack : Array Nat := #[]
   /-- Stack for square brackets -/
-  bracketStack : Array (Nat × Nat) := #[]
+  bracketStack : Array Nat := #[]
   /-- Stack for curly braces -/
-  braceStack : Array (Nat × Nat) := #[]
-  /-- Current depth for each bracket type -/
-  parenDepth : Nat := 0
-  bracketDepth : Nat := 0
-  braceDepth : Nat := 0
+  braceStack : Array Nat := #[]
+  /-- Global depth counter shared across all bracket types for visual nesting -/
+  globalDepth : Nat := 0
   /-- Result: map from bracket ID to color -/
   colorMap : Std.HashMap Nat Brackets.BracketColor := {}
 deriving Inhabited
 
-/-- Push an opening bracket onto the appropriate stack -/
+/-- Push an opening bracket onto the appropriate stack.
+    Uses globalDepth for color assignment so all bracket types share the same visual nesting. -/
 public def Brackets.MatchState.pushOpen (st : Brackets.MatchState) (id : Nat) (c : Char) : Brackets.MatchState :=
+  let depth := st.globalDepth
+  let st' := { st with globalDepth := st.globalDepth + 1, colorMap := st.colorMap.insert id (.matched depth) }
   match c with
-  | '(' => { st with
-      parenStack := st.parenStack.push (id, st.parenDepth)
-      parenDepth := st.parenDepth + 1
-      colorMap := st.colorMap.insert id (.matched st.parenDepth)
-    }
-  | '[' => { st with
-      bracketStack := st.bracketStack.push (id, st.bracketDepth)
-      bracketDepth := st.bracketDepth + 1
-      colorMap := st.colorMap.insert id (.matched st.bracketDepth)
-    }
-  | '{' => { st with
-      braceStack := st.braceStack.push (id, st.braceDepth)
-      braceDepth := st.braceDepth + 1
-      colorMap := st.colorMap.insert id (.matched st.braceDepth)
-    }
+  | '(' => { st' with parenStack := st'.parenStack.push id }
+  | '[' => { st' with bracketStack := st'.bracketStack.push id }
+  | '{' => { st' with braceStack := st'.braceStack.push id }
   | _ => st
 
-/-- Pop a closing bracket and match with opening -/
+/-- Pop a closing bracket and match with opening.
+    Uses the current globalDepth-1 for the closing bracket's color (same depth as its matching open). -/
 public def Brackets.MatchState.popClose (st : Brackets.MatchState) (id : Nat) (c : Char) : Brackets.MatchState :=
   match c with
   | ')' =>
-    if let some (_, depth) := st.parenStack.back? then
+    if st.parenStack.back?.isSome then
+      let depth := st.globalDepth - 1
       { st with
         parenStack := st.parenStack.pop
-        parenDepth := st.parenDepth - 1
+        globalDepth := depth
         colorMap := st.colorMap.insert id (.matched depth)
       }
     else
       { st with colorMap := st.colorMap.insert id .error }
   | ']' =>
-    if let some (_, depth) := st.bracketStack.back? then
+    if st.bracketStack.back?.isSome then
+      let depth := st.globalDepth - 1
       { st with
         bracketStack := st.bracketStack.pop
-        bracketDepth := st.bracketDepth - 1
+        globalDepth := depth
         colorMap := st.colorMap.insert id (.matched depth)
       }
     else
       { st with colorMap := st.colorMap.insert id .error }
   | '}' =>
-    if let some (_, depth) := st.braceStack.back? then
+    if st.braceStack.back?.isSome then
+      let depth := st.globalDepth - 1
       { st with
         braceStack := st.braceStack.pop
-        braceDepth := st.braceDepth - 1
+        globalDepth := depth
         colorMap := st.colorMap.insert id (.matched depth)
       }
     else
@@ -777,9 +770,9 @@ public def Brackets.MatchState.popClose (st : Brackets.MatchState) (id : Nat) (c
 
 /-- Mark remaining unmatched opening brackets as errors -/
 public def Brackets.MatchState.markUnmatched (st : Brackets.MatchState) : Brackets.MatchState :=
-  let st := st.parenStack.foldl (fun s (id, _) => { s with colorMap := s.colorMap.insert id .error }) st
-  let st := st.bracketStack.foldl (fun s (id, _) => { s with colorMap := s.colorMap.insert id .error }) st
-  let st := st.braceStack.foldl (fun s (id, _) => { s with colorMap := s.colorMap.insert id .error }) st
+  let st := st.parenStack.foldl (fun s id => { s with colorMap := s.colorMap.insert id .error }) st
+  let st := st.bracketStack.foldl (fun s id => { s with colorMap := s.colorMap.insert id .error }) st
+  let st := st.braceStack.foldl (fun s id => { s with colorMap := s.colorMap.insert id .error }) st
   st
 
 /-- Find all comment ranges in a string (character index ranges where `-- ...` to end of line occurs) -/
