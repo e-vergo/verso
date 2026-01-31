@@ -54,6 +54,66 @@ open Verso Doc Elab
 open Verso.ArgParse
 
 /-!
+## Block and Inline Constructors
+
+These helper functions work around name ambiguity in quotations.
+When directive expanders use `Block.other`, the name is resolved at elaboration
+time in user files where both `Lean.Doc.Block.other` and `Verso.Doc.Block.other`
+are visible. Both are aliases for the same underlying constructor.
+
+We use `private` implementation functions with `@[implemented_by]` to create
+truly opaque helpers that cannot be unfolded during elaboration.
+-/
+
+private unsafe def mkLeanNodeBlockUnsafe (label : String) : Block SBSBlueprint :=
+  Verso.Doc.Block.other (BlockExt.leanNode label) #[]
+
+@[implemented_by mkLeanNodeBlockUnsafe]
+opaque mkLeanNodeBlock (label : String) : Block SBSBlueprint
+
+private def mkPaperStatementBlockImpl (label : String) : Block SBSBlueprint :=
+  Verso.Doc.Block.other (BlockExt.paperStatement label) #[]
+
+@[implemented_by mkPaperStatementBlockImpl]
+opaque mkPaperStatementBlock (label : String) : Block SBSBlueprint
+
+private def mkPaperFullBlockImpl (label : String) : Block SBSBlueprint :=
+  Verso.Doc.Block.other (BlockExt.paperFull label) #[]
+
+@[implemented_by mkPaperFullBlockImpl]
+opaque mkPaperFullBlock (label : String) : Block SBSBlueprint
+
+private def mkPaperProofBlockImpl (label : String) : Block SBSBlueprint :=
+  Verso.Doc.Block.other (BlockExt.paperProof label) #[]
+
+@[implemented_by mkPaperProofBlockImpl]
+opaque mkPaperProofBlock (label : String) : Block SBSBlueprint
+
+private def mkLeanModuleBlockImpl (moduleName : String) : Block SBSBlueprint :=
+  Verso.Doc.Block.other (BlockExt.leanModule moduleName) #[]
+
+@[implemented_by mkLeanModuleBlockImpl]
+opaque mkLeanModuleBlock (moduleName : String) : Block SBSBlueprint
+
+private def mkNodeRefInlineImpl (label : String) (content : Array (Inline SBSBlueprint)) : Inline SBSBlueprint :=
+  Verso.Doc.Inline.other (InlineExt.nodeRef label) content
+
+@[implemented_by mkNodeRefInlineImpl]
+opaque mkNodeRefInline (label : String) (content : Array (Inline SBSBlueprint)) : Inline SBSBlueprint
+
+private def mkStatusDotInlineImpl (status : NodeStatus) : Inline SBSBlueprint :=
+  Verso.Doc.Inline.other (InlineExt.statusDot status) #[]
+
+@[implemented_by mkStatusDotInlineImpl]
+opaque mkStatusDotInline (status : NodeStatus) : Inline SBSBlueprint
+
+private def mkHtmlSpanInlineImpl (classes : String) (content : Array (Inline SBSBlueprint)) : Inline SBSBlueprint :=
+  Verso.Doc.Inline.other (InlineExt.htmlSpan classes) content
+
+@[implemented_by mkHtmlSpanInlineImpl]
+opaque mkHtmlSpanInline (classes : String) (content : Array (Inline SBSBlueprint)) : Inline SBSBlueprint
+
+/-!
 ## Block Directive Expanders
 
 These functions expand directive syntax into block expressions containing
@@ -78,7 +138,8 @@ This displays:
 def leanNode : DirectiveExpander
   | args, _contents => do
     let label ← ArgParse.run (.positional `label .string) args
-    return #[← ``(Block.other (BlockExt.leanNode $(quote label)) #[])]
+    -- Use the irreducible helper to avoid Block.other name ambiguity
+    return #[← ``(mkLeanNodeBlock $(quote label))]
 
 /--
 Insert the LaTeX statement for a blueprint node, with a link to the Lean code.
@@ -101,7 +162,7 @@ without including the full proof.
 def paperStatement : DirectiveExpander
   | args, _contents => do
     let label ← ArgParse.run (.positional `label .string) args
-    return #[← ``(Block.other (BlockExt.paperStatement $(quote label)) #[])]
+    return #[← ``(Verso.Genre.SBSBlueprint.mkPaperStatementBlock $(quote label))]
 
 /--
 Insert the full side-by-side display for a blueprint node.
@@ -122,7 +183,7 @@ The name `paperFull` matches the LaTeX `\paperfull{}` macro.
 def paperFull : DirectiveExpander
   | args, _contents => do
     let label ← ArgParse.run (.positional `label .string) args
-    return #[← ``(Block.other (BlockExt.paperFull $(quote label)) #[])]
+    return #[← ``(Verso.Genre.SBSBlueprint.mkPaperFullBlock $(quote label))]
 
 /--
 Insert just the proof for a blueprint node.
@@ -144,7 +205,7 @@ want to include only the proof.
 def paperProof : DirectiveExpander
   | args, _contents => do
     let label ← ArgParse.run (.positional `label .string) args
-    return #[← ``(Block.other (BlockExt.paperProof $(quote label)) #[])]
+    return #[← ``(Verso.Genre.SBSBlueprint.mkPaperProofBlock $(quote label))]
 
 /--
 Insert all Lean nodes from a module.
@@ -164,7 +225,7 @@ without manually listing each label.
 def leanModule : DirectiveExpander
   | args, _contents => do
     let moduleName ← ArgParse.run (.positional `moduleName .string) args
-    return #[← ``(Block.other (BlockExt.leanModule $(quote moduleName)) #[])]
+    return #[← ``(Verso.Genre.SBSBlueprint.mkLeanModuleBlock $(quote moduleName))]
 
 /-!
 ## Inline Role Expanders
@@ -186,7 +247,7 @@ def nodeRef : RoleExpander
   | args, content => do
     let label ← ArgParse.run (.positional `label .string <|> pure "") args
     let inlines ← content.mapM elabInline
-    return #[← ``(Inline.other (InlineExt.nodeRef $(quote label)) #[$inlines,*])]
+    return #[← ``(Verso.Genre.SBSBlueprint.mkNodeRefInline $(quote label) #[$inlines,*])]
 
 /--
 A status indicator dot showing the node's current status.
@@ -209,7 +270,7 @@ def statusDot : RoleExpander
       | "fullyProven" => ``(NodeStatus.fullyProven)
       | "mathlibReady" => ``(NodeStatus.mathlibReady)
       | _ => ``(NodeStatus.notReady)
-    return #[← ``(Inline.other (InlineExt.statusDot $statusTerm) #[])]
+    return #[← ``(Verso.Genre.SBSBlueprint.mkStatusDotInline $statusTerm)]
 
 /--
 An HTML span element with the given classes.
@@ -223,6 +284,6 @@ def htmlSpan : RoleExpander
   | args, content => do
     let classes ← ArgParse.run (.positional `classes .string <|> pure "") args
     let inlines ← content.mapM elabInline
-    return #[← ``(Inline.other (InlineExt.htmlSpan $(quote classes)) #[$inlines,*])]
+    return #[← ``(Verso.Genre.SBSBlueprint.mkHtmlSpanInline $(quote classes) #[$inlines,*])]
 
 end Verso.Genre.SBSBlueprint
