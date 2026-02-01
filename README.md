@@ -4,15 +4,20 @@ Fork of [leanprover/verso](https://github.com/leanprover/verso) for the [Side-by
 
 **Upstream:** https://github.com/leanprover/verso
 
-## Fork Modifications
+## Fork Purpose
 
-This fork adds two document genres for formalization documentation and rainbow bracket highlighting for Lean code.
+This fork extends Verso with document genres for formalization documentation:
+- **SBSBlueprint**: Side-by-side LaTeX/Lean blueprints with dependency graphs
+- **VersoPaper**: Academic papers linking to formalizations
+- **Rainbow bracket highlighting**: Depth-based bracket coloring for Lean code
 
-### SBSBlueprint Genre (`src/verso-sbs/`)
+## Modifications from Upstream
 
-New genre for formalization blueprints with side-by-side LaTeX/Lean display.
+### 1. SBSBlueprint Genre (`src/verso-sbs/`)
 
-**Block directives:**
+Document genre for formalization blueprints with side-by-side LaTeX/Lean display.
+
+**Block Directives:**
 
 | Directive | Purpose |
 |-----------|---------|
@@ -22,7 +27,7 @@ New genre for formalization blueprints with side-by-side LaTeX/Lean display.
 | `:::paperProof "label"` | Proof body only |
 | `:::leanModule "Module.Name"` | All blueprint nodes from a module |
 
-**Inline roles:**
+**Inline Roles:**
 
 | Role | Purpose |
 |------|---------|
@@ -30,11 +35,11 @@ New genre for formalization blueprints with side-by-side LaTeX/Lean display.
 | `{statusDot "proven"}` | Colored status indicator dot |
 | `{htmlSpan "class"}` | Span wrapper with custom CSS classes |
 
-### VersoPaper Genre (`src/verso-paper/`)
+### 2. VersoPaper Genre (`src/verso-paper/`)
 
-New genre for academic papers linking to formalizations without displaying Lean code directly.
+Document genre for academic papers with links to formalizations (without displaying Lean code directly).
 
-**Block directives:**
+**Block Directives:**
 
 | Directive | Purpose |
 |-----------|---------|
@@ -46,7 +51,7 @@ New genre for academic papers linking to formalizations without displaying Lean 
 | `:::htmlDiv "classes"` | Wrapper div with custom CSS classes |
 | `:::htmlWrapper "tag"` | Wrapper with custom HTML tag |
 
-**Inline roles:**
+**Inline Roles:**
 
 | Role | Purpose |
 |------|---------|
@@ -54,22 +59,39 @@ New genre for academic papers linking to formalizations without displaying Lean 
 | `{lean "code"}` | Inline Lean code with syntax highlighting |
 | `{span "classes"}` | Span wrapper with custom CSS classes |
 
-### Rainbow Bracket Highlighting (`src/verso/Verso/Code/Highlighted.lean`)
+### 3. Rainbow Bracket Highlighting (`src/verso/Verso/Code/Highlighted.lean`)
 
 Added bracket matching with depth-based coloring via the `Brackets` namespace:
 
 | Function | Purpose |
 |----------|---------|
+| `toHtmlRainbow` | Main entry point for rendering with rainbow brackets |
 | `renderTextWithBrackets` | Core rainbow bracket rendering |
 | `collectFromHighlighted` | Bracket position extraction from highlighted code |
 | `matchBrackets` | Bracket pair matching with depth tracking |
 
-**Implementation details:**
+**Implementation:**
 
+- Two-pass algorithm: collect brackets, then render with coloring
 - 6-color cycling across `()`, `[]`, `{}` with shared global depth counter
 - Unmatched brackets marked with `.lean-bracket-error` class
-- Brackets inside string literals and comments are not colored
+- Brackets inside string literals and doc comments are not colored
+- Line comments (`-- ...`) wrapped in `.line-comment` spans
 - CSS classes: `.lean-bracket-1` through `.lean-bracket-6`
+
+**CSS (embedded in `highlightingStyle`):**
+
+Light mode colors:
+```css
+.lean-bracket-1 { color: #d000ff; }  /* Purple */
+.lean-bracket-2 { color: #5126ff; }  /* Indigo */
+.lean-bracket-3 { color: #0184BC; }  /* Cyan */
+.lean-bracket-4 { color: #4078F2; }  /* Blue */
+.lean-bracket-5 { color: #50A14F; }  /* Green */
+.lean-bracket-6 { color: #E45649; }  /* Red */
+```
+
+Dark mode uses brighter variants via `@media (prefers-color-scheme: dark)`.
 
 ## Position in Toolchain
 
@@ -99,6 +121,8 @@ import SBSBlueprint
 # Chapter One
 
 :::leanNode "thm:main"
+
+This inserts the full side-by-side display for the node labeled "thm:main".
 ```
 
 ## Dependencies
@@ -106,9 +130,21 @@ import SBSBlueprint
 - **Lean:** v4.27.0
 - **SubVerso:** https://github.com/e-vergo/subverso.git (SBS fork with O(1) indexed lookups)
 
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/verso-sbs/SBSBlueprint/Genre.lean` | Genre type definition and BlockExt/InlineExt |
+| `src/verso-sbs/SBSBlueprint/Hooks.lean` | Directive expanders (leanNode, paperStatement, etc.) |
+| `src/verso-sbs/SBSBlueprint/Render.lean` | HTML rendering for blueprint blocks |
+| `src/verso-sbs/SBSBlueprint/Manifest.lean` | Manifest.json loading and node lookup |
+| `src/verso-paper/VersoPaper/Blocks.lean` | Paper directive expanders |
+| `src/verso-paper/VersoPaper/Html.lean` | HTML rendering for paper blocks |
+| `src/verso/Verso/Code/Highlighted.lean` | Rainbow bracket implementation |
+
 ## Tooling
 
-For build commands, screenshot capture, compliance validation, and archive management, see the [Archive & Tooling Hub](../archive/README.md).
+For build commands, screenshot capture, compliance validation, and archive management, see the [Archive & Tooling Hub](../../archive/README.md).
 
 ## License
 
