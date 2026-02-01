@@ -1,41 +1,34 @@
 # Verso (Side-by-Side Blueprint Fork)
 
-Fork of [leanprover/verso](https://github.com/leanprover/verso), a document authoring framework for Lean developed by David Thrane Christiansen at the Lean FRO.
+Fork of [leanprover/verso](https://github.com/leanprover/verso) for the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain.
 
 **Upstream:** https://github.com/leanprover/verso
 
 ## Fork Modifications
 
-This fork extends Verso with two document genres for the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain, plus rainbow bracket highlighting for Lean code.
+This fork adds two document genres and rainbow bracket highlighting for Lean code.
 
 ### New Genres
 
 | Genre | Location | Purpose |
 |-------|----------|---------|
-| **SBSBlueprint** | `src/verso-sbs/` | Mathematical formalization blueprints with side-by-side LaTeX/Lean display |
-| **VersoPaper** | `src/verso-paper/` | Academic papers with verification badges and links to formalizations |
+| **SBSBlueprint** | `src/verso-sbs/` | Formalization blueprints with side-by-side LaTeX/Lean display |
+| **VersoPaper** | `src/verso-paper/` | Academic papers with verification badges and formalization links |
 
 ### Rainbow Bracket Highlighting
 
-Located in `Verso/Code/Highlighted.lean`:
+Located in `src/verso/Verso/Code/Highlighted.lean`:
 
-- **`toHtmlRainbow`**: Renders highlighted code with depth-based bracket coloring
-- 6-color cycling across `()`, `[]`, `{}` with a shared global depth counter
-- Unmatched brackets marked with error styling
-- Brackets inside string literals and doc comments are not colored
+| Function | Purpose |
+|----------|---------|
+| `toHtmlRainbow` | Core rainbow bracket rendering |
+| `blockHtmlRainbow` | Block-level wrapper |
+| `inlineHtmlRainbow` | Inline wrapper |
 
-```lean
--- API
-hl.toHtmlRainbow              -- Core rainbow bracket rendering
-hl.blockHtmlRainbow ctx code  -- Block-level wrapper
-hl.inlineHtmlRainbow ctx code -- Inline wrapper
-```
-
-CSS classes: `.lean-bracket-1` through `.lean-bracket-6`, `.lean-bracket-error`
-
-### Comment Detection
-
-`Brackets.findCommentRanges` identifies `-- ...` line comment ranges to prevent bracket matching within comments.
+- 6-color cycling across `()`, `[]`, `{}` with shared global depth counter
+- Unmatched brackets marked with `.lean-bracket-error` class
+- Brackets inside string literals and comments are not colored
+- CSS classes: `.lean-bracket-1` through `.lean-bracket-6`
 
 ## SBSBlueprint Genre
 
@@ -73,14 +66,15 @@ For academic papers that link to formalizations without displaying Lean code dir
 | `:::leanNode "label"` | Insert a blueprint node by label |
 | `:::leanModule "ModuleName"` | Insert all nodes from a module |
 | `:::htmlDiv "classes"` | Wrapper div with custom CSS classes |
+| `:::htmlWrapper "tag"` | Wrapper with custom HTML tag |
 
 **Inline roles:**
 
 | Role | Purpose |
 |------|---------|
-| `{nodeRef "label"}` | Cross-reference link to a blueprint node |
-| `{leanCode}` | Inline Lean code with syntax highlighting |
-| `{htmlSpan "classes"}` | Span wrapper with custom CSS classes |
+| `{ref "label"}` | Cross-reference link to a blueprint node |
+| `{lean "code"}` | Inline Lean code with syntax highlighting |
+| `{span "classes"}` | Span wrapper with custom CSS classes |
 
 ## Integration
 
