@@ -6,33 +6,11 @@ Fork of [leanprover/verso](https://github.com/leanprover/verso) for the [Side-by
 
 ## Fork Modifications
 
-This fork adds two document genres and rainbow bracket highlighting for Lean code.
+This fork adds two document genres for formalization documentation and rainbow bracket highlighting for Lean code.
 
-### New Genres
+### SBSBlueprint Genre (`src/verso-sbs/`)
 
-| Genre | Location | Purpose |
-|-------|----------|---------|
-| **SBSBlueprint** | `src/verso-sbs/` | Formalization blueprints with side-by-side LaTeX/Lean display |
-| **VersoPaper** | `src/verso-paper/` | Academic papers with verification badges and formalization links |
-
-### Rainbow Bracket Highlighting
-
-Located in `src/verso/Verso/Code/Highlighted.lean`:
-
-| Function | Purpose |
-|----------|---------|
-| `toHtmlRainbow` | Core rainbow bracket rendering |
-| `blockHtmlRainbow` | Block-level wrapper |
-| `inlineHtmlRainbow` | Inline wrapper |
-
-- 6-color cycling across `()`, `[]`, `{}` with shared global depth counter
-- Unmatched brackets marked with `.lean-bracket-error` class
-- Brackets inside string literals and comments are not colored
-- CSS classes: `.lean-bracket-1` through `.lean-bracket-6`
-
-## SBSBlueprint Genre
-
-For writing formalization blueprints with narrative prose and side-by-side theorem displays.
+New genre for formalization blueprints with side-by-side LaTeX/Lean display.
 
 **Block directives:**
 
@@ -52,9 +30,9 @@ For writing formalization blueprints with narrative prose and side-by-side theor
 | `{statusDot "proven"}` | Colored status indicator dot |
 | `{htmlSpan "class"}` | Span wrapper with custom CSS classes |
 
-## VersoPaper Genre
+### VersoPaper Genre (`src/verso-paper/`)
 
-For academic papers that link to formalizations without displaying Lean code directly.
+New genre for academic papers linking to formalizations without displaying Lean code directly.
 
 **Block directives:**
 
@@ -76,9 +54,24 @@ For academic papers that link to formalizations without displaying Lean code dir
 | `{lean "code"}` | Inline Lean code with syntax highlighting |
 | `{span "classes"}` | Span wrapper with custom CSS classes |
 
-## Integration
+### Rainbow Bracket Highlighting (`src/verso/Verso/Code/Highlighted.lean`)
 
-Part of the Side-by-Side Blueprint toolchain:
+Added bracket matching with depth-based coloring via the `Brackets` namespace:
+
+| Function | Purpose |
+|----------|---------|
+| `renderTextWithBrackets` | Core rainbow bracket rendering |
+| `collectFromHighlighted` | Bracket position extraction from highlighted code |
+| `matchBrackets` | Bracket pair matching with depth tracking |
+
+**Implementation details:**
+
+- 6-color cycling across `()`, `[]`, `{}` with shared global depth counter
+- Unmatched brackets marked with `.lean-bracket-error` class
+- Brackets inside string literals and comments are not colored
+- CSS classes: `.lean-bracket-1` through `.lean-bracket-6`
+
+## Position in Toolchain
 
 ```
 SubVerso -> LeanArchitect -> Dress -> Runway
@@ -111,7 +104,11 @@ import SBSBlueprint
 ## Dependencies
 
 - **Lean:** v4.27.0
-- **SubVerso:** https://github.com/e-vergo/subverso.git
+- **SubVerso:** https://github.com/e-vergo/subverso.git (SBS fork with O(1) indexed lookups)
+
+## Tooling
+
+For build commands, screenshot capture, compliance validation, and archive management, see the [Archive & Tooling Hub](../archive/README.md).
 
 ## License
 
