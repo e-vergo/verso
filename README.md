@@ -144,7 +144,27 @@ This inserts the full side-by-side display for the node labeled "thm:main".
 
 ## Tooling
 
-For build commands, screenshot capture, compliance validation, and archive management, see the [Archive & Tooling Hub](../../archive/README.md).
+For build commands, screenshot capture, compliance validation, and archive management, see the [Archive & Tooling Hub](../../dev/storage/README.md).
+
+### Local Development
+
+To build a project using this fork:
+
+```bash
+# From a project directory with lakefile.toml and runway.json
+cd /path/to/project
+python ../../dev/scripts/build.py
+```
+
+The build script handles:
+1. Syncing all repos to GitHub
+2. Building SubVerso, LeanArchitect, Dress, and Runway in order
+3. Building the project with `BLUEPRINT_DRESS=1`
+4. Generating dependency graph and manifests
+5. Building the site
+6. Starting a local server at localhost:8000
+
+Options: `--dry-run`, `--skip-cache`, `--verbose`, `--capture`
 
 ## License
 
