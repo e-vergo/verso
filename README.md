@@ -1,6 +1,6 @@
 # Verso (Side-by-Side Blueprint Fork)
 
-Fork of [leanprover/verso](https://github.com/leanprover/verso) for the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain.
+Fork of [leanprover/verso](https://github.com/leanprover/verso) for the [Side-by-Side Blueprint](https://github.com/e-vergo/SLS-Strange-Loop-Station) toolchain.
 
 **Upstream:** https://github.com/leanprover/verso
 
